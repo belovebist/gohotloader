@@ -5,11 +5,11 @@
 package main
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/golang/glog"
 )
 
 type RecursiveWatcher struct {
@@ -25,7 +25,7 @@ func (rw *RecursiveWatcher) AddRecursive(name string) error {
 		}
 		if info.IsDir() {
 			if err := rw.Add(path); err != nil {
-				glog.Errorf("Cannot add path %s; err: %s", path, err)
+				log.Printf("Cannot add path %s; err: %s", path, err)
 				return err
 			}
 		}
@@ -35,27 +35,27 @@ func (rw *RecursiveWatcher) AddRecursive(name string) error {
 }
 
 func (rw *RecursiveWatcher) Add(name string) error {
-	glog.Infof("Watching path: %s", name)
+	log.Printf("Watching path: %s", name)
 	return rw.watcher.Add(name)
 }
 
 func (rw *RecursiveWatcher) Close() error {
-	glog.Infof("Closing RecursiveWatcher")
+	log.Printf("Closing RecursiveWatcher")
 	return rw.watcher.Close()
 }
 
 func (rw *RecursiveWatcher) Remove(name string) error {
-	glog.Infof("Stopped watching path: %s", name)
+	log.Printf("Stopped watching path: %s", name)
 	return rw.watcher.Remove(name)
 }
 
 func (rw *RecursiveWatcher) RegisterEventHandler(eventHandler func(fsnotify.Event)) {
-	glog.Warningf("Registering EventHandler")
+	log.Printf("Registering EventHandler")
 	rw.handleEvent = eventHandler
 }
 
 func (rw *RecursiveWatcher) RegisterErrorHandler(errorHandler func(error)) {
-	glog.Warningf("Registering ErrorHandler")
+	log.Printf("Registering ErrorHandler")
 	rw.handleError = errorHandler
 }
 
@@ -81,6 +81,6 @@ func NewRecursiveWatcher() (*RecursiveWatcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	glog.Warningf("Created RecursiveWatcher")
+	log.Printf("Created RecursiveWatcher")
 	return &rw, nil
 }

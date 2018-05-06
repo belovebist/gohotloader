@@ -9,12 +9,12 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/golang/glog"
 
 	"gopkg.in/urfave/cli.v1"
 )
@@ -42,7 +42,7 @@ func main() {
 		for _, pathToWatchArg := range pathsToWatchArg {
 			pathToWatch, err := filepath.Glob(pathToWatchArg)
 			if err != nil {
-				glog.Warningf("WATCH; Invalid path: %v; skipping", pathToWatchArg)
+				log.Printf("WATCH; Invalid path: %v; skipping", pathToWatchArg)
 				continue
 			}
 			pathsToWatch = append(pathsToWatch, pathToWatch...)
@@ -56,13 +56,9 @@ func main() {
 	}
 	err := app.Run(os.Args)
 	if err != nil {
-		glog.Fatal(err)
+		log.Fatal(err)
 	}
 }
-
-type Config map[string]interface{}
-
-var config Config
 
 type HotLoader struct {
 	PathsToWatch []string
@@ -142,7 +138,7 @@ func (hl *HotLoader) run() error {
 
 func (hl *HotLoader) reload() error {
 	if hl.cmd != nil {
-		glog.Infof("reload; killing pid: %d", hl.cmd.Process.Pid)
+		log.Printf("reload; killing pid: %d", hl.cmd.Process.Pid)
 		hl.cmd.Process.Kill()
 	}
 	return hl.run()
@@ -168,13 +164,13 @@ func (hl *HotLoader) startWatcher() {
 		}
 
 		if rebuild {
-			glog.Warningf("Building %s", hl.AppPath)
+			log.Printf("Building %s", hl.AppPath)
 			if err := hl.build(); err != nil {
-				glog.Errorf("BUILD; Failed; %s" + err.Error())
+				log.Printf("BUILD; Failed; %s" + err.Error())
 			} else {
-				glog.Warningf("Reloading %s", hl.execPath)
+				log.Printf("Reloading %s", hl.execPath)
 				if err := hl.reload(); err != nil {
-					glog.Errorf("RELOAD; Failed; %s" + err.Error())
+					log.Printf("RELOAD; Failed; %s" + err.Error())
 				}
 			}
 		}
@@ -187,7 +183,7 @@ func (hl *HotLoader) startWatcher() {
 
 // Start HotLoader itself
 func (hl *HotLoader) Start() error {
-	glog.Warningf("Starting HotLoader; BUILD: %v; WATCH: %v", hl.AppPath, hl.PathsToWatch)
+	log.Printf("Starting HotLoader; BUILD: %v; WATCH: %v", hl.AppPath, hl.PathsToWatch)
 
 	rw, err := NewRecursiveWatcher()
 	if err != nil {
