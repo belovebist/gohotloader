@@ -7,22 +7,57 @@ package main
 
 import (
 	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/golang/glog"
+
+	"gopkg.in/urfave/cli.v1"
 )
 
 func main() {
-	hotLoader := new(HotLoader)
-	hotLoader.ParseArgs()
-	hotLoader.Start()
+	app := cli.NewApp()
+	app.Name = "Go HotLoader"
+	app.Usage = "Build and reload app when code is changed"
+
+	app.Flags = []cli.Flag{
+		cli.StringSliceFlag{
+			Name:  "watch, w",
+			Usage: "Directory or file path to watch for changes; If Glob Pattern is provided, it must be quoted; Eg: -w \"/home/deps/*\"",
+		},
+		cli.StringFlag{
+			Name:  "app, a",
+			Usage: "Path to application source code directory to build and run; Must be inside $GOPATH/src",
+		},
+	}
+	app.Action = func(c *cli.Context) error {
+		appPath := c.String("app")
+
+		pathsToWatchArg := c.StringSlice("watch")
+		pathsToWatch := []string{}
+		for _, pathToWatchArg := range pathsToWatchArg {
+			pathToWatch, err := filepath.Glob(pathToWatchArg)
+			if err != nil {
+				glog.Warningf("WATCH; Invalid path: %v; skipping", pathToWatchArg)
+				continue
+			}
+			pathsToWatch = append(pathsToWatch, pathToWatch...)
+		}
+
+		hotLoader := new(HotLoader)
+		hotLoader.AppPath = appPath
+		hotLoader.PathsToWatch = pathsToWatch
+		hotLoader.execPath = "/tmp/hl_build"
+		return hotLoader.Start()
+	}
+	err := app.Run(os.Args)
+	if err != nil {
+		glog.Fatal(err)
+	}
 }
 
 type Config map[string]interface{}
@@ -30,35 +65,11 @@ type Config map[string]interface{}
 var config Config
 
 type HotLoader struct {
-	config Config
-	rw     *RecursiveWatcher //  recursive watcher to monitor the config["watch"] directories
-	cmd    *exec.Cmd         // command that's running the watched application
-}
-
-func (hl *HotLoader) ParseArgs() {
-	watch := flag.String("watch", "", "Comma separated list of dirs to watch inside $GOPATH/src")
-	build := flag.String("build", "", "Build particular dir inside $GOPATH/src")
-	exec := flag.String("exec", "/tmp/hl_build", "Path to the built executable")
-	flag.Parse()
-	if *build == "" {
-		*build = *watch
-	}
-
-	if *watch == "" {
-		glog.Error("Must provide option -watch (dirs to watch, inside $GOPATH)")
-		flag.Usage()
-		os.Exit(1)
-	}
-	if *build == "" {
-		glog.Error("Must provide option -build (dir to build, inside $GOPATH)")
-		flag.Usage()
-		os.Exit(1)
-	}
-	hl.config = Config{
-		"watch": strings.Split(*watch, ","),
-		"build": *build,
-		"exec":  *exec,
-	}
+	PathsToWatch []string
+	AppPath      string
+	execPath     string
+	rw           *RecursiveWatcher //  recursive watcher to monitor the config["watch"] directories
+	cmd          *exec.Cmd         // command that's running the watched application
 }
 
 // execute and handle basic errors
@@ -82,7 +93,7 @@ func (hl *HotLoader) exec(name string, args ...string) (*exec.Cmd, io.ReadCloser
 
 // go get all the dependencies before building
 func (hl *HotLoader) goGet() error {
-	cmd, stderr, stdout, err := hl.exec("go", "get", hl.config["build"].(string))
+	cmd, stderr, stdout, err := hl.exec("go", "get", hl.AppPath)
 	if err != nil {
 		return errors.New("goGet; " + err.Error())
 	}
@@ -102,7 +113,7 @@ func (hl *HotLoader) build() error {
 		return errors.New("build; " + err.Error())
 	}
 	cmd, stderr, stdout, err := hl.exec("go",
-		"build", "-o", hl.config["exec"].(string), hl.config["build"].(string))
+		"build", "-o", hl.execPath, hl.AppPath)
 	if err != nil {
 		return errors.New("build; " + err.Error())
 	}
@@ -118,7 +129,7 @@ func (hl *HotLoader) build() error {
 
 // run the built executable
 func (hl *HotLoader) run() error {
-	cmd, stderr, stdout, err := hl.exec(hl.config["exec"].(string))
+	cmd, stderr, stdout, err := hl.exec(hl.execPath)
 	if err != nil {
 		return errors.New("run; " + err.Error())
 	}
@@ -157,13 +168,13 @@ func (hl *HotLoader) startWatcher() {
 		}
 
 		if rebuild {
-			glog.Warningf("Building %s", hl.config["build"].(string))
+			glog.Warningf("Building %s", hl.AppPath)
 			if err := hl.build(); err != nil {
-				glog.Errorf("BUILD FAILED; %s" + err.Error())
+				glog.Errorf("BUILD; Failed; %s" + err.Error())
 			} else {
-				glog.Warningf("Reloading %s", hl.config["exec"].(string))
+				glog.Warningf("Reloading %s", hl.execPath)
 				if err := hl.reload(); err != nil {
-					glog.Errorf("RELOAD FAILED; %s" + err.Error())
+					glog.Errorf("RELOAD; Failed; %s" + err.Error())
 				}
 			}
 		}
@@ -175,12 +186,12 @@ func (hl *HotLoader) startWatcher() {
 }
 
 // Start HotLoader itself
-func (hl *HotLoader) Start() {
-	glog.Warningf("Starting HotLoader; build: %v", hl.config["build"])
+func (hl *HotLoader) Start() error {
+	glog.Warningf("Starting HotLoader; BUILD: %v; WATCH: %v", hl.AppPath, hl.PathsToWatch)
 
 	rw, err := NewRecursiveWatcher()
 	if err != nil {
-		glog.Fatalf("Start; %s", err)
+		return err
 	}
 	hl.rw = rw
 
@@ -189,14 +200,9 @@ func (hl *HotLoader) Start() {
 
 	go hl.startWatcher() // start the watcher
 
-	for _, dir := range hl.config["watch"].([]string) {
-		gopath, ok := os.LookupEnv("GOPATH")
-		if !ok {
-			gopath = "/go"
-		}
-		dir = fmt.Sprintf("%s/src/%s", gopath, dir)
+	for _, dir := range hl.PathsToWatch {
 		if err := hl.rw.AddRecursive(dir); err != nil {
-			glog.Fatalf("Start; %s", err)
+			return err
 		}
 	}
 
@@ -207,4 +213,5 @@ func (hl *HotLoader) Start() {
 	})
 
 	<-done
+	return nil
 }
